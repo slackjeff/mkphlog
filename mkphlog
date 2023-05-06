@@ -1,0 +1,239 @@
+#!/bin/sh
+
+# mkphlog - a utility to ease the creation of phlogs.
+#           Organizes phlog posts in separate directories.
+# Created by octotep; anyone can distribute, modify, and
+# share this file however they please.
+#
+# Version 0.6
+#
+# Please note, all date strings are in the form of mm/dd/yy(yy)
+
+# The base of the entire gopher site.
+# SDF default: $HOME/gopher
+gopherRoot="$HOME/gopher"
+
+# The name of the phlog directory (contained in $gopherHome)
+phlogDirName="phlog"
+
+# Current working directory of the script
+cwd=$(pwd)
+
+# File name for a post
+postFile=""
+
+# Default editor, unless the user has one specified in env
+editor=${EDITOR:-nano}
+
+# Default timezone, unless the user has one specified in env
+TZ=${TZ:-UTC}
+
+# Controls whether the post is automatically added to the main 
+# phlog page. If so, Each entry looks like: "BlabBlabBlab (mm/dd/yy)",
+# otherwise, links will need to be manually added.
+addTitleToMain=true
+
+# Tells the script how many lines the title of the main page spans.
+# Used to insert the newest post at the top.
+# Titles created by mkphlog are 3 lines.
+# Isn't used if $addTitleToMain is false
+titleLineCount=3
+
+# The URL your home gopher directory. Should contain
+# the $phlogDir. Ex. gopher://sdf.org/1/users/octotep/
+#gopherUrl="gopher://sdf.org/1/users/$(whoami)"
+gopherUrl="gopher://slackjeff.com.br"
+
+# The URL of your phlog. Should probably be $gopherUrl/$phlogDir/
+phlogUrl="$gopherUrl/$phlogDirName"
+
+#Command-line flags
+silentMode=false
+
+# Prints the help screen and exits
+DisplayHelp() {
+	echo "mkphlog [-hs] [file_with_post] [title] "
+	echo
+	echo "Updates a phlog created in the mkphlog format"
+	echo "Options:"
+	echo "  -s    Run the script in silent mode. As long as a file"
+	echo "        with the post is specified, the script will publish"
+	echo "        the post without prompting the user for any information"
+	echo "        If no title is specified, the title is the filename."
+	echo "        (Underscore characters are considered spaces)."
+	echo
+	echo "  -h    Display this help"
+	echo
+	echo "Created by Chris Yealy (octotep)"
+	echo "The newest version can be found at:"
+	echo "gopher://sdf.org/1/users/octotep/dls/mkphlog"
+	echo "or"
+	echo "https://bitbucket.org/octotep/mkphlog/"
+	exit 0
+}
+
+# Tests for a gopher directory. Exits on failure.
+TestForGopherDirectory() {
+	if [ -d $gopherRoot ] ; then
+		cd $gopherRoot
+	else
+		echo "You don't have a gopherspace set-up. Please run the mkgopher utility."
+		exit 1
+	fi
+}
+
+# Tests for a phlog directory. If one doesn't exist, create it.
+TestForPhlogDirectory() {
+	if [ -d $phlogDirName ] ; then
+		cd $phlogDirName
+	else
+		echo -n "Do you want to create a phlog directory? (y/n) "
+		read phlogDirAns
+		phlogDirAns=$(echo $phlogDirAns | tr A-Z a-z)
+		if [ $phlogDirAns = "y" ]; then
+		    CreatePhlogDir
+		else
+		    exit 1
+		fi
+	fi
+}
+
+# Creates the phlog directory if it dosen't already exist.
+CreatePhlogDir() {
+	mkdir $phlogDirName
+	chmod 755 $phlogDirName
+	cd $phlogDirName
+	echo -n "What would you like to name your phlog? "
+	read phlogNameAns
+	echo $phlogNameAns > gophermap
+	echo "=======================================" >> gophermap
+	echo >> gophermap
+	chmod 644 $gopherRoot/$phlogDirName/gophermap
+	echo "Phlog directory and main gophermap file created." 
+}
+
+# Create phlog entry
+CreatePhlogEntry() {
+	echo "Creating today's phlog entry..."
+	# Touch the main gophermap, for the SDF phlogosphere
+	touch $gopherRoot/gophermap
+	entryDate=`date +%m-%d-%y`
+	# Make sure there isn't a post for that day, lest we overwrite it.
+	if [ ! -d "$entryDate" ]; then
+		mkdir $entryDate
+		chmod 755 $entryDate
+		cd $entryDate
+		touch gophermap
+		chmod 644 gophermap
+	else
+		echo "There is already a post for today."
+		AskToEdit
+	fi
+}
+
+# Updates the main phlog listing. This is where the magic happens.
+UpdatePhlogListing() {
+	##echo "enter UpdatePhlogListing"
+	# If the user wants the post automatically added to the 
+	# main page, do it.
+	if [ "$addTitleToMain" = true ] ; then
+		cd $gopherRoot/$phlogDirName/
+		# Break up the gophermap
+		totalLineCount=$(wc -l gophermap | sed -e 's/ //g' -e 's/gophermap//')
+		linesLeft=$(echo "$totalLineCount - $titleLineCount" | bc)
+		head -n $titleLineCount gophermap > title.tmp
+		tail -n $linesLeft gophermap > gophermap.tmp
+		# Recreate the gophermap
+		rm gophermap
+		cat title.tmp > gophermap
+		echo -e "1${postTitleAns} (${entryDate})\t./${entryDate}" >> gophermap
+		cat gophermap.tmp >> gophermap
+		rm title.tmp gophermap.tmp
+		chmod 644 $gopherRoot/$phlogDirName/gophermap
+	fi
+	cd $gopherRoot/$phlogDirName/$entryDate/
+	echo $postTitleAns >> gophermap
+	date "+%A %b %e %l:%M:%S %Y" >> gophermap
+	echo "------------------------------" >> gophermap
+	# If the user supplied a file with the text of the post, use it.
+	if [ -f "$cwd/$postFile" ] ; then
+		echo >> gophermap
+		cat "$cwd/$postFile" >> gophermap
+	fi
+	echo >> gophermap
+}
+                    
+AskToEdit() {
+    echo -n "Would you like to edit the post with $editor? (y/n) "
+	read editorAns
+	editorAns=$(echo $editorAns | tr A-Z a-z)
+	if [ $editorAns = y ]; then
+	    $editor $gopherRoot/$phlogDirName/$entryDate/gophermap
+	else
+	    exit 0
+	fi
+	exit 0
+}
+
+#### Main script ####
+
+# Parse our options
+while getopts "sh" optionName; do
+	case $optionName in
+		s) silentMode=true ;;
+		h) DisplayHelp ;;
+		\?) echo "Unknown parameters. Please run mkphlog -h" ; exit 1 ;;
+	esac
+done
+shift $((OPTIND-1)); OPTIND=1
+
+postFile="$1"
+
+TestForGopherDirectory
+TestForPhlogDirectory
+
+# Different things for different modes
+if [ "$silentMode" = true ] ; then
+	if [ ! -f "$cwd/$1" ] ; then
+		echo "Post file does not exist."
+		exit 1
+	fi
+	# Just in case the user didn't specify a title
+	if [ "$2" = "" ] ; then
+		postTitleAns=$(echo $1 | sed -e 's/_/ /g') 
+	else
+		postTitleAns=$2
+	fi
+	CreatePhlogEntry
+	UpdatePhlogListing
+else
+	echo -n "Would you like to create a phlog entry for today? (y/n) "
+	read phlogAns
+	phlogAns=$(echo $phlogAns | tr A-Z a-z)
+    if [ $phlogAns = y ]; then
+        CreatePhlogEntry
+    else
+        exit 0
+    fi
+	if [ ! -f "$cwd/$1" ] ; then
+		echo "Post file does not exist. Creating new post anyway."
+	fi
+	# Get a title if one isn't provided
+	if [ "$2" = "" ] ; then
+		echo -n "Title: "
+		read postTitleAns
+	else
+		postTitleAns=$2
+	fi
+	# Get a description for the feeds
+	if [ "$createRssFeed" = true ] || [ "$createAtomFeed" = true ] ; then
+		echo -n "Description of post: "
+		read postDesc
+	fi
+	UpdatePhlogListing
+	if [ -e "$cwd/$1" ] ; then
+		AskToEdit
+	fi
+fi
+
+exit 0
